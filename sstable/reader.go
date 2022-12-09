@@ -2883,6 +2883,9 @@ func (r *Reader) readBlock(
 		if raState.sequentialFile != nil {
 			file = raState.sequentialFile
 		} else if readaheadSize := raState.maybeReadahead(int64(bh.Offset), int64(bh.Length+blockTrailerLen)); readaheadSize > 0 {
+			fmt.Fprintf(os.Stderr, "readahead: read of file %s (%q) recommends readahead (off %d, sz %d)\n",
+				r.fileNum, r.filename, bh.Offset, uint64(readaheadSize))
+
 			if readaheadSize >= maxReadaheadSize {
 				// We've reached the maximum readahead size. Beyond this
 				// point, rely on OS-level readahead. Note that we can only
@@ -2892,10 +2895,15 @@ func (r *Reader) readBlock(
 				if r.fs != nil {
 					f, err := r.fs.Open(r.filename, vfs.SequentialReadsOption)
 					if err == nil {
+						fmt.Fprintf(os.Stderr, "readahead: exceeded maxReadaheadSize and successfully opened file %s (%q) for sequential reads (off %d, sz %d).\n",
+							r.fileNum, r.filename, bh.Offset, uint64(readaheadSize))
 						// Use this new file handle for all sequential reads by
 						// this iterator going forward.
 						raState.sequentialFile = f
 						file = f
+					} else {
+						fmt.Fprintf(os.Stderr, "readahead: error opening sequential reads file %s (%q) for readahead (off %d, sz %d): %s\n",
+							r.fileNum, r.filename, bh.Offset, uint64(readaheadSize), err)
 					}
 				}
 			}
@@ -2904,7 +2912,10 @@ func (r *Reader) readBlock(
 					Fd() uintptr
 				}
 				if f, ok := r.file.(fd); ok {
-					_ = vfs.Prefetch(f.Fd(), bh.Offset, uint64(readaheadSize))
+					if err := vfs.Prefetch(f.Fd(), bh.Offset, uint64(readaheadSize)); err != nil {
+						fmt.Fprintf(os.Stderr, "readahead: error during prefetch %s (off %d, sz %d): %s\n",
+							r.fileNum, bh.Offset, uint64(readaheadSize), err)
+					}
 				}
 			}
 		}
