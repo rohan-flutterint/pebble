@@ -25,8 +25,9 @@ import (
 // modification as they are not affected by the suffix, while block and table
 // properties are only minimally recomputed.
 //
-// Any block and table property collectors configured in the WriterOptions must
-// implement SuffixReplaceableTableCollector/SuffixReplaceableBlockCollector.
+// Any table property collectors configured in the WriterOptions must implement
+// SuffixReplaceableTableCollector. Block property collectors may optionally
+// implement SuffixReplaceableBlockCollector.
 func RewriteKeySuffixes(
 	sst []byte,
 	rOpts ReaderOptions,
@@ -64,9 +65,10 @@ func rewriteKeySuffixesInBlocks(
 			return nil, errors.Errorf("property collector %s does not support suffix replacement", c.Name())
 		}
 	}
+	var replaceableBlockCollectors []SuffixReplaceableBlockCollector
 	for _, c := range w.blockPropCollectors {
-		if _, ok := c.(SuffixReplaceableBlockCollector); !ok {
-			return nil, errors.Errorf("block property collector %s does not support suffix replacement", c.Name())
+		if rc, ok := c.(SuffixReplaceableBlockCollector); ok {
+			replaceableBlockCollectors = append(replaceableBlockCollectors, rc)
 		}
 	}
 
@@ -75,7 +77,7 @@ func rewriteKeySuffixesInBlocks(
 		return nil, errors.Wrap(err, "reading layout")
 	}
 
-	if err := rewriteDataBlocksToWriter(r, w, l.Data, from, to, w.split, concurrency); err != nil {
+	if err := rewriteDataBlocksToWriter(r, w, l.Data, from, to, w.split, concurrency, replaceableBlockCollectors); err != nil {
 		return nil, errors.Wrap(err, "rewriting data blocks")
 	}
 
@@ -213,6 +215,7 @@ func rewriteDataBlocksToWriter(
 	from, to []byte,
 	split Split,
 	concurrency int,
+	replaceableCollectors []SuffixReplaceableBlockCollector,
 ) error {
 	if r.Properties.NumEntries == 0 {
 		// No point keys.
@@ -303,8 +306,8 @@ func rewriteDataBlocksToWriter(
 			oldProps[oldShortIDs[id]] = val
 		}
 
-		for i, p := range w.blockPropCollectors {
-			if err := p.(SuffixReplaceableBlockCollector).UpdateKeySuffixes(oldProps[i], from, to); err != nil {
+		for i, c := range replaceableCollectors {
+			if err := c.UpdateKeySuffixes(oldProps[i], from, to); err != nil {
 				return err
 			}
 		}
