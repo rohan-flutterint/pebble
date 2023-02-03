@@ -624,6 +624,15 @@ type Options struct {
 		// https://github.com/cockroachdb/pebble/issues/2292 and
 		// https://github.com/cockroachdb/pebble/issues/2266 are closed.
 		IngestSSTablesAsFlushable bool
+
+		// TablePartitions allows user code to influence where flushes and
+		// compactions split outputted sstables. If configured, every flush and
+		// compaction invokes the provided function with the user key bounds of
+		// the flush or compaction to construct a slice of user key boundarys
+		// that no outputted table should span.
+		//
+		// This is an experimental API and the interface will definitely change.
+		TablePartitions func(startKey, endKey []byte, endKeyExclusive bool) [][]byte
 	}
 
 	// Filters is a map from filter policy name to filter policy. It is used for

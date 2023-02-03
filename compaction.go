@@ -192,6 +192,39 @@ func (lf *limitFuncSplitter) onNewOutput(key []byte) []byte {
 	return nil
 }
 
+type tablePartitionsSplitter struct {
+	frontier         frontier
+	partitionPoints  [][]byte
+	atPartitionPoint bool
+}
+
+func newTablePartitionsSplitter(f *frontiers, partitionPoints [][]byte) *tablePartitionsSplitter {
+	s := &tablePartitionsSplitter{partitionPoints: partitionPoints[1:]}
+	s.frontier.Init(f, partitionPoints[0], func(key []byte) (next []byte) {
+		s.atPartitionPoint = true
+		if len(s.partitionPoints) > 0 {
+			next, s.partitionPoints = s.partitionPoints[0], s.partitionPoints[1:]
+		}
+		return next
+	})
+	return s
+}
+
+func (s *tablePartitionsSplitter) shouldSplitBefore(
+	key *InternalKey, tw *sstable.Writer,
+) maybeSplit {
+	if s.atPartitionPoint {
+		s.atPartitionPoint = false
+		return splitNow
+	}
+	return noSplit
+}
+
+func (s *tablePartitionsSplitter) onNewOutput(key []byte) []byte {
+	s.atPartitionPoint = false
+	return s.frontier.key
+}
+
 // splitterGroup is a compactionOutputSplitter that splits whenever one of its
 // child splitters advises a compaction split.
 type splitterGroup struct {
@@ -2464,6 +2497,12 @@ func (d *DB) runCompaction(
 	d.mu.Unlock()
 	defer d.mu.Lock()
 
+	var userPartitions [][]byte
+	if d.opts.Experimental.TablePartitions != nil {
+		userPartitions = d.opts.Experimental.TablePartitions(
+			c.smallest.UserKey, c.largest.UserKey, c.largest.IsExclusiveSentinel())
+	}
+
 	iiter, err := c.newInputIter(d.newIters, d.tableNewRangeKeyIter, snapshots)
 	if err != nil {
 		return nil, pendingOutputs, err
@@ -2837,6 +2876,9 @@ func (d *DB) runCompaction(
 	}
 	if splitL0Outputs {
 		outputSplitters = append(outputSplitters, newLimitFuncSplitter(&iter.frontiers, c.findL0Limit))
+	}
+	if len(userPartitions) > 0 {
+		outputSplitters = append(outputSplitters, newTablePartitionsSplitter(&iter.frontiers, userPartitions))
 	}
 	splitter := &splitterGroup{cmp: c.cmp, splitters: outputSplitters}
 
