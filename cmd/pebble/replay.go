@@ -110,6 +110,17 @@ func (c *replayConfig) runOnce(stdout io.Writer, workloadPath string) error {
 		fmt.Fprintln(stdout, r.Opts.String())
 	}
 
+	lockTableStart := []byte("\x01\x7a")
+	lockTableEnd := []byte("\x01\x7b")
+	lockTableBounds := [][]byte{lockTableStart, lockTableEnd}
+
+	r.Opts.Experimental.TablePartitions = func(start, end []byte, endIsExclusive bool) [][]byte {
+		if r.Opts.Comparer.Compare(start, lockTableEnd) >= 0 {
+			return nil
+		}
+		return lockTableBounds
+	}
+
 	// Begin the workload. Run does not block.
 	ctx := context.Background()
 	if err := r.Run(ctx); err != nil {
